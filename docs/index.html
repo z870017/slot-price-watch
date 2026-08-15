@@ -76,6 +76,9 @@
   .pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:99px;
     background:var(--accent-soft);color:var(--accent);margin-left:5px}
   .pill.out{background:var(--line);color:var(--ink3)}
+  .pill.odd{background:var(--warn-soft);color:var(--warn)}
+  .cell-odd{opacity:.5}
+  .cell-odd a{color:var(--ink3)}
   .muted{color:var(--ink3)}
   .empty{padding:44px;text-align:center;color:var(--ink3)}
 
@@ -288,9 +291,12 @@ function renderRows() {
     const cells = sites.map(s => {
       const v = r.sites[s.key];
       if (!v) return `<td class="num muted">—</td>`;
-      const isLow = r.site_count > 1 && v.price === r.min_price;
-      return `<td class="num ${isLow ? "cell-low" : ""}">`
+      const isLow = r.site_count > 1 && v.price === r.min_price && !v.outlier;
+      // 天價品項照實顯示（那是店家真的標的），但淡化並加註，避免被誤讀成行情
+      const cls = v.outlier ? "cell-odd" : (isLow ? "cell-low" : "");
+      return `<td class="num ${cls}">`
         + `<a href="${v.url}" target="_blank" rel="noopener" title="${escapeHtml(v.raw_name)}">${yen(v.price)}</a>`
+        + (v.outlier ? `<span class="pill odd" title="明顯偏離其他店行情，未列入價差計算">偏離行情</span>` : "")
         + (v.sold_out ? `<span class="pill out">售完</span>` : "")
         + `<span class="twd">${twd(v.price)}</span></td>`;
     }).join("");
