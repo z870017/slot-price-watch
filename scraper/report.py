@@ -114,6 +114,7 @@ def write_csv(comparison, summary, changes, site_meta):
         header = ["機種名", "規格", "廠商", "站數", "有庫存", "最低價", "最高價", "價差", "價差%", "最便宜店家"]
         for key in site_keys:
             header += [f"{site_names[key]} 價格", f"{site_names[key]} 連結"]
+        header += ["行情排名", "行情價", "本週漲跌", "上市週數"]
         header.append("備註")
         w.writerow(header)
 
@@ -127,6 +128,13 @@ def write_csv(comparison, summary, changes, site_meta):
             for key in site_keys:
                 entry = row["sites"].get(key)
                 line += [entry["price"] if entry else "", entry["url"] if entry else ""]
+            sb = row.get("souba")
+            line += [
+                sb["rank"] if sb else "",
+                (sb["price"] if sb and sb["price"] is not None else "-") if sb else "-",
+                (f'{sb["delta"]:+,}' if sb and sb["delta"] is not None else "") if sb else "",
+                sb["weeks"] if sb and sb["weeks"] is not None else "",
+            ]
             line.append("含偏離行情報價，價差已排除該筆" if row.get("has_outlier") else "")
             w.writerow(line)
     paths["prices"] = path

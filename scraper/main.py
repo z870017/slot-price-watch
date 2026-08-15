@@ -14,9 +14,10 @@ import logging
 import os
 import sys
 
-from . import db, report
+from . import db, psouba, report
 from .config import DROP_ALERT_RATIO, SITES
 from .matcher import build_groups, summarize
+from .http import Fetcher
 from .sites import SiteScraper
 
 logging.basicConfig(
@@ -51,7 +52,14 @@ def run(args) -> int:
         log.info("=== reprocess run #%d：%d 筆原始資料 ===", run_id, len(all_rows))
         counts = db.site_counts(conn, run_id)
         changes = []
-        return _finish(args, conn, run_id, all_rows, warnings, counts, changes, selected)
+        rankings = []
+        if not args.no_souba:
+            try:
+                rankings, souba_warn = psouba.fetch_rankings(Fetcher(delay=3.0))
+                warnings.extend(souba_warn)
+            except Exception as e:
+                warnings.append(f"[p_souba] 抓取失敗：{e}")
+        return _finish(args, conn, run_id, all_rows, warnings, counts, changes, selected, rankings)
 
     run_id = db.start_run(conn, trigger=args.trigger)
     log.info("=== run #%d 開始（trigger=%s）===", run_id, args.trigger)
@@ -86,10 +94,22 @@ def run(args) -> int:
 
     changes = db.detect_changes(conn, run_id)
     log.info("偵測到 %d 筆變動", len(changes))
-    return _finish(args, conn, run_id, all_rows, warnings, counts, changes, selected)
+
+    # 中古機相場.com 的行情榜（只有兩頁，很輕）
+    rankings = []
+    if not args.no_souba:
+        log.info("--- 中古機相場.com 行情榜 ---")
+        try:
+            rankings, souba_warn = psouba.fetch_rankings(Fetcher(delay=3.0))
+            warnings.extend(souba_warn)
+        except Exception as e:
+            log.exception("行情榜抓取失敗")
+            warnings.append(f"[p_souba] 抓取失敗：{e}")
+
+    return _finish(args, conn, run_id, all_rows, warnings, counts, changes, selected, rankings)
 
 
-def _finish(args, conn, run_id, all_rows, warnings, counts, changes, selected):
+def _finish(args, conn, run_id, all_rows, warnings, counts, changes, selected, rankings=None):
     """比對 → 統計 → 輸出。正常抓取與 --reprocess 共用這一段。"""
     groups, review = build_groups(all_rows)
     site_keys = [s.key for s in selected]
@@ -101,6 +121,13 @@ def _finish(args, conn, run_id, all_rows, warnings, counts, changes, selected):
         warnings.append(
             f"有 {len(price_outliers)} 筆報價明顯偏離行情（例如店家對缺貨品掛天價），"
             f"價格照實顯示但不列入價差統計")
+    if rankings:
+        matched = psouba.attach_to_comparison(comparison, rankings)
+        log.info("行情榜 %d 筆，對上比價表 %d 台機種", len(rankings), matched)
+    else:
+        for row in comparison:
+            row.setdefault("souba", None)
+
     summary = report.poc_summary(comparison, counts, site_keys)
 
     site_meta = [{"key": s.key, "name": s.name, "base_url": s.base_url} for s in selected]
@@ -196,6 +223,8 @@ def main() -> int:
     p_run.add_argument("--use-cache", action="store_true", help="重用本地 HTTP 快取")
     p_run.add_argument("--no-detail", action="store_true", help="不補抓商品明細頁（更快但資料較少）")
     p_run.add_argument("--no-excel", action="store_true", help="不產出 Excel")
+    p_run.add_argument("--no-souba", action="store_true",
+                       help="不抓中古機相場.com 行情榜")
     p_run.add_argument("--reprocess", action="store_true",
                        help="不連網路，用資料庫最新一輪的原始資料重新產出報表")
     p_run.add_argument("--trigger", default="manual", help="觸發來源標記（schedule / manual / web）")
