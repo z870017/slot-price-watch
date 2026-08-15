@@ -50,6 +50,15 @@
   .alert{background:var(--warn-soft);border-left:3px solid var(--warn);border-radius:0 8px 8px 0;
     padding:10px 15px;margin-bottom:10px;font-size:13.2px;color:var(--warn)}
 
+  .tabs{display:flex;gap:6px;margin-bottom:12px}
+  .tab{font-size:13.5px;padding:7px 16px;border-radius:8px;background:transparent;
+    border:1px solid transparent;color:var(--ink3)}
+  .tab.on{background:var(--card);border-color:var(--line);color:var(--ink);font-weight:600}
+  /* 校正明細：同一機種的幾筆用同色塊框在一起，一眼看得出「這幾筆被歸成同一台」 */
+  .grp-a{background:var(--card)}
+  .grp-b{background:var(--bg)}
+  td.raw{white-space:normal;max-width:420px;font-size:13px}
+  .gid{font-variant-numeric:tabular-nums;color:var(--ink3);font-size:12px}
   .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
   input[type=search],select,input[type=number]{font:inherit;padding:7px 11px;border:1px solid var(--line);
     border-radius:8px;background:var(--card);color:var(--ink)}
@@ -130,6 +139,11 @@
 <div id="alerts"></div>
 <div class="stats" id="stats"></div>
 <div class="verdict" id="verdict" hidden></div>
+
+<div class="tabs">
+  <button class="tab on" data-view="compare">比價表</button>
+  <button class="tab" data-view="audit">校正明細</button>
+</div>
 
 <div class="toolbar">
   <input type="search" id="q" placeholder="搜尋機種名…（例：からくり、カバネリ）">
@@ -398,6 +412,88 @@ async function latestRunId(api, headers) {
 }
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+/* ---------- 校正明細 ---------- */
+let AUDIT = null, VIEW = "compare";
+
+async function loadAudit() {
+  if (AUDIT) return AUDIT;
+  const slug = repoSlug();
+  const urls = ["items.csv?t=" + Date.now()];
+  if (slug) urls.push(`https://raw.githubusercontent.com/${slug}/main/docs/items.csv?t=` + Date.now());
+  for (const u of urls) {
+    try {
+      const res = await fetch(u, { cache: "no-store" });
+      if (!res.ok) continue;
+      const text = await res.text();
+      const rows = text.split("\n").filter(l => l.trim()).slice(1).map(splitCsv);
+      AUDIT = rows;
+      return AUDIT;
+    } catch (e) { /* 換下一個來源 */ }
+  }
+  return null;
+}
+
+/* CSV 有欄位帶引號（商品標題含逗號），不能直接 split(",") */
+function splitCsv(line) {
+  const out = []; let cur = "", inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') { if (inQ && line[i + 1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+    else if (ch === "," && !inQ) { out.push(cur); cur = ""; }
+    else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
+function renderAudit() {
+  const q = $("q").value.trim().toLowerCase();
+  const onlyCompare = $("onlyCompare").checked;
+
+  $("thead").innerHTML = ["機種編號", "歸類後機種名", "店家", "原始商品標題", "價格", "在庫"]
+    .map(h => `<th>${h}</th>`).join("");
+
+  if (!AUDIT) { $("tbody").innerHTML = ""; $("empty").hidden = false; return; }
+
+  // 先算每個機種橫跨幾個店家，「只看可比價」要用到
+  const siteCount = {};
+  AUDIT.forEach(r => { (siteCount[r[0]] = siteCount[r[0]] || new Set()).add(r[4]); });
+
+  let rows = AUDIT.filter(r => {
+    if (onlyCompare && (siteCount[r[0]] || new Set()).size < 2) return false;
+    if (q && !(r[1] + " " + r[5]).toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  $("count").textContent = `${rows.length} 筆`;
+  $("empty").hidden = rows.length > 0;
+
+  let lastGid = null, band = false;
+  $("tbody").innerHTML = rows.slice(0, 1500).map(r => {
+    if (r[0] !== lastGid) { band = !band; lastGid = r[0]; }
+    return `<tr class="${band ? "grp-a" : "grp-b"}">
+      <td class="gid">${escapeHtml(r[0])}</td>
+      <td class="name">${escapeHtml(r[1])}${r[2] ? `<span class="pill">${escapeHtml(r[2])}</span>` : ""}</td>
+      <td>${escapeHtml(r[4])}</td>
+      <td class="raw"><a href="${escapeHtml(r[8] || "#")}" target="_blank" rel="noopener">${escapeHtml(r[5])}</a></td>
+      <td class="num">${yen(Number(r[6]))}<span class="twd">${twd(Number(r[6]))}</span></td>
+      <td class="muted">${escapeHtml(r[7])}</td>
+    </tr>`;
+  }).join("");
+}
+
+document.querySelectorAll(".tab").forEach(t => t.onclick = async () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.toggle("on", x === t));
+  VIEW = t.dataset.view;
+  if (VIEW === "audit") {
+    $("tbody").innerHTML = `<tr><td colspan="6" class="muted" style="padding:26px">載入逐筆明細…</td></tr>`;
+    await loadAudit();
+    renderAudit();
+  } else {
+    render();
+  }
+});
+
 /* ---------- 設定 ---------- */
 function openSettings() {
   $("repoIn").value = localStorage.getItem(LS.repo) || repoSlug() || "";
@@ -428,8 +524,14 @@ function syncButtonLabel() {
 syncButtonLabel();
 
 $("refresh").onclick = triggerRefresh;
-["q", "onlyCompare", "onlyStock"].forEach(id => $(id).oninput = () => DATA && renderRows());
-$("rate").oninput = () => { localStorage.setItem(LS.rate, $("rate").value); DATA && renderRows(); };
+["q", "onlyCompare", "onlyStock"].forEach(id => $(id).oninput = () => {
+  if (VIEW === "audit") renderAudit();
+  else if (DATA) renderRows();
+});
+$("rate").oninput = () => {
+  localStorage.setItem(LS.rate, $("rate").value);
+  if (VIEW === "audit") renderAudit(); else if (DATA) renderRows();
+};
 $("rate").value = localStorage.getItem(LS.rate) || "0.21";
 
 loadData();
