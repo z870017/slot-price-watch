@@ -109,11 +109,12 @@ def _finish(args, conn, run_id, all_rows, warnings, counts, changes, selected):
         {"id": run_id, "trigger": args.trigger, "review_pending": len(review)},
     )
     csv_paths = report.write_csv(comparison, summary, changes, site_meta)
+    csv_paths["items"] = report.write_items_csv(groups, site_meta)
     db.finish_run(conn, run_id, note=f"{len(all_rows)} items, {len(changes)} changes")
 
     xlsx_path = None
     if not args.no_excel:
-        xlsx_path = report.write_excel(comparison, summary, site_meta, review)
+        xlsx_path = report.write_excel(comparison, summary, site_meta, review, groups)
 
     os.makedirs(os.path.join(report.ROOT, "out"), exist_ok=True)
     with open(os.path.join(report.ROOT, "out", "review_queue.json"), "w", encoding="utf-8") as f:
@@ -170,8 +171,9 @@ def demo(args) -> int:
         {"id": run_id, "trigger": "demo", "review_pending": len(review)},
     )
     report.write_csv(comparison, summary, changes, site_meta)
+    report.write_items_csv(groups, site_meta)
     db.finish_run(conn, run_id, note="demo")
-    xlsx = report.write_excel(comparison, summary, site_meta, review)
+    xlsx = report.write_excel(comparison, summary, site_meta, review, groups)
 
     print(f"demo 完成：{len(DEMO_ROWS)} 筆假資料 → {summary['total_models']} 台機種，"
           f"{summary['comparable_models']} 台可比價，待確認 {len(review)} 筆")

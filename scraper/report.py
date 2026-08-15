@@ -69,6 +69,30 @@ def write_frontend_json(comparison, summary, changes, site_meta, warnings, run_m
     return path
 
 
+def write_items_csv(groups, site_meta):
+    """逐筆明細：一列一個商品，附原始標題與網址。
+
+    比價表是「一列一機種」，看不出某一筆原始商品被歸到哪裡去。
+    校正的時候需要的是這張：拿著原始標題和網址就能直接開頁面核對，
+    也能一眼看出「這兩筆真的是同一台嗎」。
+    """
+    os.makedirs(DOCS_DIR, exist_ok=True)
+    site_names = {s["key"]: s["name"] for s in site_meta}
+    path = os.path.join(DOCS_DIR, "items.csv")
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["機種編號", "歸類後機種名", "規格", "廠商",
+                    "店家", "原始商品標題", "價格", "在庫", "商品網址"])
+        for group in sorted(groups.values(), key=lambda g: -len(g["members"])):
+            for m in sorted(group["members"], key=lambda x: x["price"]):
+                w.writerow([
+                    group["gid"], group["name"], group["spec"] or "", group["maker"] or "",
+                    site_names.get(m["site"], m["site"]), m["raw_name"], m["price"],
+                    "售完" if m["sold_out"] else "有貨", m["url"],
+                ])
+    return path
+
+
 def write_csv(comparison, summary, changes, site_meta):
     """輸出給 Google 試算表吃的 CSV。
 
@@ -152,7 +176,7 @@ def write_csv(comparison, summary, changes, site_meta):
     return paths
 
 
-def write_excel(comparison, summary, site_meta, review_queue):
+def write_excel(comparison, summary, site_meta, review_queue, groups=None):
     """Phase 0 的主要交付物：一張可以直接寄給客戶看的比價表。"""
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -187,6 +211,13 @@ def write_excel(comparison, summary, site_meta, review_queue):
             entry = row["sites"].get(key)
             line.append(entry["price"] if entry else "")
         ws.append(line)
+        # 價格直接做成可點的連結，校正時不用再自己去搜尋商品
+        for offset, key in enumerate(site_keys):
+            entry = row["sites"].get(key)
+            if entry and entry.get("url"):
+                cell = ws.cell(row=ws.max_row, column=10 + offset)
+                cell.hyperlink = entry["url"]
+                cell.font = Font(color="1F6FEB", underline="single")
         if row["site_count"] >= 2 and row["spread"] > 0:
             for cell in ws[ws.max_row]:
                 cell.fill = highlight
@@ -236,6 +267,30 @@ def write_excel(comparison, summary, site_meta, review_queue):
     for col, w in zip("ABCDEF", [10, 18, 40, 46, 14, 52]):
         ws3.column_dimensions[col].width = w
     ws3.freeze_panes = "A2"
+
+    # --- Sheet 4: 逐筆明細（校正用） ---
+    if groups:
+        ws4 = wb.create_sheet("逐筆明細")
+        ws4.append(["機種編號", "歸類後機種名", "規格", "廠商", "店家",
+                    "原始商品標題", "價格", "在庫", "商品網址"])
+        for cell in ws4[1]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = header_fill
+        site_names = {s["key"]: s["name"] for s in site_meta}
+        for group in sorted(groups.values(), key=lambda g: -len(g["members"])):
+            for m in sorted(group["members"], key=lambda x: x["price"]):
+                ws4.append([
+                    group["gid"], group["name"], group["spec"] or "", group["maker"] or "",
+                    site_names.get(m["site"], m["site"]), m["raw_name"], m["price"],
+                    "售完" if m["sold_out"] else "有貨", m["url"],
+                ])
+                ws4.cell(row=ws4.max_row, column=9).hyperlink = m["url"]
+                ws4.cell(row=ws4.max_row, column=9).font = Font(color="1F6FEB", underline="single")
+        for col, wd in zip("ABCDEFGHI", [10, 34, 9, 14, 18, 46, 12, 8, 56]):
+            ws4.column_dimensions[col].width = wd
+        ws4.freeze_panes = "A2"
+        for cell in ws4["G"][1:]:
+            cell.number_format = "¥#,##0"
 
     stamp = datetime.now().strftime("%Y%m%d")
     path = os.path.join(OUT_DIR, f"比價表_{stamp}.xlsx")
