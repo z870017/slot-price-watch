@@ -1,4 +1,7 @@
 {
-  "home_slot": "",
+  "home_slot": [
+    "path",
+    "list"
+  ],
   "a_slot": ""
 }
