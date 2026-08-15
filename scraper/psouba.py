@@ -1,4 +1,4 @@
-"""中古機相場.com（p-souba）行情排行榜。
+undefined"""中古機相場.com（p-souba）行情排行榜。
 
 跟三家商店性質不同：這站不賣機器，是業者間的中古行情資訊站，
 每週統計柏青哥／柏青嫂各前 100 名的成交行情。
@@ -139,26 +139,43 @@ def fetch_rankings(fetcher) -> tuple:
     return rows, warnings
 
 
+FUZZY_MIN = 92
+
+
 def attach_to_comparison(comparison: list, rankings: list) -> int:
-    """把行情資訊掛到比價表上。回傳成功對上的機種數。"""
+    """把行情資訊掛到比價表上。回傳成功對上的機種數。
+
+    比對規則刻意嚴格。第一版用「一邊包含另一邊」當退路，結果行情榜的
+    「サンダーV」同時掛到了 サンダーV2、サンダーVスペシャル、
+    サンダーVライトニング、ダイナミックサンダーV —— 那是四台不同的機器。
+    現在的退路是：數字指紋要一致、機種類型不能互斥、字面相似度 92 分以上。
+    寧可少掛幾台，也不要掛錯行情。
+    """
+    from rapidfuzz import fuzz
+
     from .normalize import normalize
 
     index = {}
     for r in rankings:
         norm = normalize(r["name"])
         if norm["key"]:
-            index.setdefault(norm["key"], r)
+            index.setdefault(norm["key"], {**r, "_digits": norm["digits"]})
 
     matched = 0
     for row in comparison:
-        key = normalize(row["name"])["key"]
+        norm = normalize(row["name"])
+        key = norm["key"]
         hit = index.get(key)
-        if hit is None:
-            # 排行榜的寫法可能多／少幾個字，退一步做包含比對
+        if hit is None and key:
+            best_score = 0
             for k, r in index.items():
-                if k and key and (k in key or key in k) and abs(len(k) - len(key)) <= 6:
-                    hit = r
-                    break
+                if r["_digits"] != norm["digits"]:
+                    continue          # 續作編號不同 → 不同機器，直接排除
+                if norm["kind"] and r["kind"] != norm["kind"]:
+                    continue          # 柏青哥／柏青嫂不能互掛
+                score = fuzz.ratio(k, key)
+                if score >= FUZZY_MIN and score > best_score:
+                    best_score, hit = score, r
         if hit:
             matched += 1
             row["souba"] = {
