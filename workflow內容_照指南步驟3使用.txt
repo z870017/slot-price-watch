@@ -1,0 +1,91 @@
+name: 比價抓取
+
+on:
+  # 每日兩次（UTC）：23:00 → 台灣 07:00 ／ 11:00 → 台灣 19:00
+  schedule:
+    - cron: "0 23 * * *"
+    - cron: "0 11 * * *"
+  # 網頁上的「立即更新」按鈕就是打 API 觸發這個事件
+  workflow_dispatch:
+    inputs:
+      sites:
+        description: "只抓指定站（留空=全部）：home_slot,a_slot,initialp"
+        required: false
+        default: ""
+      limit_categories:
+        description: "每站只抓前 N 個分類（0=不限，試跑時填 3）"
+        required: false
+        default: "0"
+
+# 同時只跑一輪，避免使用者連按按鈕造成重複抓取打擾站方
+concurrency:
+  group: scrape
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安裝套件
+        run: pip install -r requirements.txt
+
+      - name: 執行抓取
+        env:
+          # 走 env 而不是直接把 inputs 內插進指令，schedule 觸發時 inputs 是空的，
+          # 直接內插會讓指令長出奇怪的空參數
+          SITES: ${{ github.event.inputs.sites }}
+          LIMIT: ${{ github.event.inputs.limit_categories }}
+        run: |
+          ARGS=""
+          [ -n "$SITES" ] && ARGS="$ARGS --sites $SITES"
+          [ -n "$LIMIT" ] && [ "$LIMIT" != "0" ] && ARGS="$ARGS --limit-categories $LIMIT"
+          echo "執行：python -m scraper.main run --trigger ${{ github.event_name }} $ARGS"
+          python -m scraper.main run --trigger "${{ github.event_name }}" $ARGS
+
+      - name: 上傳 Excel 比價表
+        uses: actions/upload-artifact@v4
+        with:
+          name: 比價表
+          path: out/*.xlsx
+          retention-days: 90
+
+      - name: 提交結果
+        run: |
+          git config user.name  "slot-price-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add data/prices.db data/pagination.json docs/data.json docs/*.csv
+          if git diff --staged --quiet; then
+            echo "沒有變動，跳過 commit"
+          else
+            git commit -m "chore: 更新價格資料 $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
+
+      - name: 摘要
+        run: |
+          echo "### 抓取完成 :white_check_mark:" >> $GITHUB_STEP_SUMMARY
+          python - <<'PY' >> $GITHUB_STEP_SUMMARY
+          import json
+          d = json.load(open("docs/data.json", encoding="utf-8"))
+          s = d["summary"]
+          print(f"- 商品總數：**{s['total_products']}**")
+          print(f"- 可跨站比價機種：**{s['comparable_models']}**")
+          print(f"- 價差中位數：**¥{s['median_spread_yen']:,}**")
+          print(f"- 本次變動：**{len(d['changes'])}** 筆")
+          print(f"\n> {s['verdict']}")
+          for w in d["warnings"]:
+              print(f"\n:warning: {w}")
+          PY
