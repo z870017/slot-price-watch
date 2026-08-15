@@ -16,6 +16,11 @@ on:
         description: "每站只抓前 N 個分類（0=不限，試跑時填 3）"
         required: false
         default: "0"
+      reprocess:
+        description: "只重算報表不重新抓取（改比對規則時用，30 秒完成）"
+        type: boolean
+        required: false
+        default: false
 
 # 同時只跑一輪，避免使用者連按按鈕造成重複抓取打擾站方
 concurrency:
@@ -48,10 +53,12 @@ jobs:
           # 直接內插會讓指令長出奇怪的空參數
           SITES: ${{ github.event.inputs.sites }}
           LIMIT: ${{ github.event.inputs.limit_categories }}
+          REPROCESS: ${{ github.event.inputs.reprocess }}
         run: |
           ARGS=""
           [ -n "$SITES" ] && ARGS="$ARGS --sites $SITES"
           [ -n "$LIMIT" ] && [ "$LIMIT" != "0" ] && ARGS="$ARGS --limit-categories $LIMIT"
+          [ "$REPROCESS" = "true" ] && ARGS="$ARGS --reprocess"
           echo "執行：python -m scraper.main run --trigger ${{ github.event_name }} $ARGS"
           python -m scraper.main run --trigger "${{ github.event_name }}" $ARGS
 
