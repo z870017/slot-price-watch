@@ -20,6 +20,7 @@ from .config import (
     MIN_MACHINE_PRICE,
     NON_MACHINE_KEYWORDS,
     OPTION_CATEGORY_KEYWORDS,
+    OVERVIEW_CATEGORY_KEYWORDS,
     SiteConfig,
 )
 from .http import Fetcher
@@ -85,6 +86,11 @@ def is_option_category(name: str) -> bool:
     return any(word in name for word in OPTION_CATEGORY_KEYWORDS)
 
 
+def is_overview_category(name: str) -> bool:
+    """「全件表示」這種總覽分類：內容與其他分類重複，且含配件。"""
+    return any(word in name for word in OVERVIEW_CATEGORY_KEYWORDS)
+
+
 def is_machine(name: str, price: int) -> bool:
     """判斷這筆是不是一台實機（而不是配件、服務或版面文案）。
 
@@ -135,7 +141,7 @@ class SiteScraper:
                 if not any(x["url"] == e["url"] for x in entries):
                     entries.append(e)
 
-        if len(entries) < self.ENOUGH_CATEGORIES:
+        if len(entries) < self.site.enough_categories:
             log.info("[%s] 第一層只找到 %d 個分類，往下再找一層", self.site.key, len(entries))
             for e in list(entries):
                 html = self.fetcher.get(e["url"])
@@ -171,6 +177,10 @@ class SiteScraper:
                 skipped += 1
                 log.info("[%s] 跳過配件分類：%s", self.site.key, e["text"])
                 continue
+            if e["text"] and is_overview_category(e["text"]):
+                skipped += 1
+                log.info("[%s] 跳過總覽分類：%s", self.site.key, e["text"])
+                continue
             found.append(e["url"])
 
         if skipped:
@@ -200,7 +210,9 @@ class SiteScraper:
             html = self.fetcher.get(probe_url)
             if not html:
                 continue
-            urls = set(parse.find_item_links(html, probe_url, self.site.kind))
+            # 用跟正式解析同一條路徑取商品，否則像 FC2 這種要靠價格特徵
+            # 才認得出商品的站，探測會拿到 0 件而誤判成「沒有分頁」
+            urls = {i["url"] for i in parse.parse_list_page(html, probe_url, self.site.kind)}
             # 有商品、且跟第 1 頁明顯不同 → 這個方式有效。
             # 比對「新出現的商品」而不是只看不相等，因為有些站分頁失敗時
             # 會默默回傳第一頁，那種情況必須判定為失敗。
