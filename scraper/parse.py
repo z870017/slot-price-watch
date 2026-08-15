@@ -199,7 +199,13 @@ def parse_list_page(html: str, page_url: str, kind: str):
 
 
 def _extract_name(container, anchors):
-    """商品名優先序：連結文字 > 圖片 alt > 容器內最長的一行文字。"""
+    """商品名：連結文字 > 圖片 alt。兩者都拿不到就回空字串。
+
+    早期版本在這兩招都失敗時，會退而取「容器內最長的一行文字」。
+    那一招會把版面上的區塊標題和廣告文案當成商品名撈進來
+    （實際跑出來就出現了「お客様の声」和一整段配件說明）。
+    寧可回空字串讓上層去抓商品明細頁，也不要猜。
+    """
     for a in anchors:
         t = _clean_text(a)
         if len(t) >= 4 and not is_sold_out(t):
@@ -211,9 +217,7 @@ def _extract_name(container, anchors):
     img = container.find("img")
     if img and img.get("alt") and len(img["alt"].strip()) >= 4:
         return re.sub(r"\s+", " ", img["alt"].strip())
-    lines = [l.strip() for l in container.get_text("\n").split("\n") if len(l.strip()) >= 4]
-    lines = [l for l in lines if not PRICE_RE.search(l)]
-    return max(lines, key=len) if lines else ""
+    return ""
 
 
 def parse_detail_page(html: str, url: str):

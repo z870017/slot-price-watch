@@ -15,7 +15,12 @@ import re
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from . import parse
-from .config import SiteConfig
+from .config import (
+    MAX_NAME_LENGTH,
+    MIN_MACHINE_PRICE,
+    NON_MACHINE_KEYWORDS,
+    SiteConfig,
+)
 from .http import Fetcher
 
 log = logging.getLogger(__name__)
@@ -72,6 +77,19 @@ def _save_probe_cache(cache: dict) -> None:
     os.makedirs(os.path.dirname(PROBE_CACHE), exist_ok=True)
     with open(PROBE_CACHE, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False, indent=2)
+
+
+def is_machine(name: str, price: int) -> bool:
+    """判斷這筆是不是一台實機（而不是配件、服務或版面文案）。
+
+    三站的分類頁裡實機和配件是混在一起的，不濾掉的話比價表會被
+    「コイン不要機」「不要台回収サービス」「お客様の声」這種東西洗版。
+    """
+    if price < MIN_MACHINE_PRICE:
+        return False
+    if len(name) > MAX_NAME_LENGTH:
+        return False
+    return not any(word in name for word in NON_MACHINE_KEYWORDS)
 
 
 class SiteScraper:
@@ -222,9 +240,13 @@ class SiteScraper:
                     item.update(detail)
 
         rows = []
+        skipped_non_machine = 0
         for item in by_url.values():
             if not item["name"] or item["price"] is None:
                 continue                    # 名稱或價格缺一不可，寧可丟掉也不要髒資料
+            if not is_machine(item["name"], item["price"]):
+                skipped_non_machine += 1
+                continue
             rows.append({
                 "site": self.site.key,
                 "site_name": self.site.name,
@@ -233,6 +255,9 @@ class SiteScraper:
                 "price": item["price"],
                 "sold_out": bool(item["sold_out"]),
             })
+        if skipped_non_machine:
+            log.info("[%s] 濾掉 %d 筆非機台項目（配件／服務／版面文案）",
+                     self.site.key, skipped_non_machine)
 
         # 只有在「確實遇過滿頁分類、卻仍然探測不出分頁」時才示警。
         # 試跑模式下分類少又小，沒探測是正常的，不該亂報警。
