@@ -52,8 +52,7 @@ SITES = [
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36 "
-    "SlotPriceWatch/0.1 (personal price comparison; contact: owner)"
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
 # 抓到的商品數比上一次掉超過這個比例就發出告警（代表網站可能改版了）

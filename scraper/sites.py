@@ -161,8 +161,15 @@ class SiteScraper:
             # 大分類頁本身不抓，它底下的小分類會逐一走訪
             if e["top"] and not e["sub"] and e["top"] in top_names:
                 continue
+            # ShopServe：靠大分類名稱判斷（スロット実機 vs スロットオプション）
             if e["top"] and e["top"] in excluded_tops:
                 skipped += 1
+                continue
+            # FC2 カート：沒有大分類這層，但側欄的分類名稱本身就寫得很清楚
+            # （中古パチンコ 一覧 / 中古パチスロ 一覧 / オプション品 一覧），直接看名稱
+            if not e["top"] and e["text"] and is_option_category(e["text"]):
+                skipped += 1
+                log.info("[%s] 跳過配件分類：%s", self.site.key, e["text"])
                 continue
             found.append(e["url"])
 
@@ -302,6 +309,15 @@ class SiteScraper:
             self.warnings.append(
                 f"[{self.site.key}] 分頁方式偵測失敗，只抓到每個分類的第一頁"
                 f"（後續頁面的商品會漏掉）"
+            )
+
+        # 一件都沒抓到一定要吵。之前這裡是靜悄悄的 ——
+        # FC2 站整站 0 件，摘要上卻一個警告都沒有，只有翻各站明細才會發現少了一整站。
+        if not rows:
+            self.warnings.append(
+                f"⚠ [{self.site.key}] 完全沒抓到任何商品"
+                f"（共送出 {self.fetcher.stats['requests']} 次請求、"
+                f"失敗 {self.fetcher.stats['errors']} 次）— 該站可能擋掉了自動抓取"
             )
 
         # 扣掉被過濾器擋下的，剩下的才是真正「抓壞了」的筆數

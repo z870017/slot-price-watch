@@ -12,6 +12,7 @@ import os
 import time
 
 import requests
+from urllib.parse import urlsplit
 
 from .config import USER_AGENT
 
@@ -26,11 +27,22 @@ class Fetcher:
         self.use_cache = use_cache
         self.timeout = timeout
         self._last_request_at = 0.0
+        self._last_url = None
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": USER_AGENT,
-            "Accept-Language": "ja,en;q=0.8",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                      "image/avif,image/webp,*/*;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            # FC2 カート 那站對「看起來不像瀏覽器」的請求會直接回 503，
+            # 補齊這幾個一般瀏覽器都會送的標頭。
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-User": "?1",
         })
         self.stats = {"requests": 0, "cache_hits": 0, "errors": 0}
 
@@ -69,7 +81,15 @@ class Fetcher:
         for attempt in range(1, retries + 1):
             self._throttle()
             try:
-                resp = self.session.get(url, timeout=self.timeout)
+                # 帶上同站 Referer，跟正常瀏覽行為一致
+                headers = {}
+                parts = urlsplit(url)
+                if self._last_url and urlsplit(self._last_url).netloc == parts.netloc:
+                    headers["Referer"] = self._last_url
+                else:
+                    headers["Referer"] = f"{parts.scheme}://{parts.netloc}/"
+                resp = self.session.get(url, timeout=self.timeout, headers=headers)
+                self._last_url = url
                 self.stats["requests"] += 1
 
                 if resp.status_code == 200:
