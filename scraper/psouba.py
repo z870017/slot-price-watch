@@ -38,18 +38,22 @@ SIGNED_RE = re.compile(r"^[+\-±]")
 def parse_ranking(html: str, kind: str) -> list:
     """解析排行榜表格。
 
-    欄位位置會因為有沒有登入而位移（登入才會多一欄價格），
+    欄位數量會因為有沒有登入而不同（金額欄要登入才會輸出），
     所以不靠固定索引，改用內容特徵判斷：
       「12位」→ 排名 ／ 「90週目」→ 上市週數
-      含「円」且開頭有 +- ± → 漲跌額
-      含「円」但沒有正負號 → 價格（只有登入才會出現）
+      含「円」且開頭有 +- ± → 漲跌額（需登入）
+      含「円」但沒有正負號 → 行情價（需登入）
+
+    認列一筆資料的條件是「有排名欄」而不是「有金額欄」。
+    早期版本用金額當條件，結果未登入時整頁一個「円」都沒有，
+    100 筆全被跳過 —— 排名和機種名明明是公開的。
     """
     soup = soup_of(html)
     out = []
     for tr in soup.find_all("tr"):
         cells = [c.get_text(" ", strip=True) for c in tr.find_all("td")]
         cells = [re.sub(r"\s+", " ", c) for c in cells]
-        if not any(YEN_RE.search(c) for c in cells):
+        if not any(RANK_RE.match(c) for c in cells):
             continue
 
         rank = weeks = price = delta = None
@@ -127,10 +131,10 @@ def fetch_rankings(fetcher) -> tuple:
         with_price = sum(1 for r in parsed if r["price"] is not None)
         log.info("[p_souba] %s：%d 筆（含價格 %d 筆）", label, len(parsed), with_price)
 
-    if rows and not any(r["price"] is not None for r in rows):
+    if rows and not any(r["price"] is not None or r["delta"] is not None for r in rows):
         warnings.append(
-            "[p_souba] 行情價欄位需要會員登入才會顯示，自動抓取取不到，"
-            "比價表該欄會顯示「-」；漲跌額與排名不受影響"
+            "[p_souba] 中古機相場.com 的金額欄（行情價、本週漲跌）需要會員登入才輸出，"
+            "自動排程抓不到，比價表這兩欄顯示「-」；行情排名與上市週數正常更新"
         )
     return rows, warnings
 
