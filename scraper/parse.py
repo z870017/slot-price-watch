@@ -19,9 +19,10 @@ PRICE_RE = re.compile(r"[¥￥]\s*([0-9][0-9,]{2,})|([0-9][0-9,]{2,})\s*円")
 SOLD_OUT_WORDS = ("在庫切れ", "売り切れ", "売切れ", "完売", "SOLD OUT", "soldout", "販売終了", "入荷待ち")
 TAX_INCL_WORDS = ("税込", "込)", "込）")
 
-# ShopServe 系：商品明細頁是 /SHOP/xxxx.html，分類頁是 /SHOP/數字/數字/list.html
+# ShopServe 系：商品明細頁是 /SHOP/xxxx.html
+# 分類頁有兩種：/SHOP/大分類/list.html 與 /SHOP/大分類/小分類/list.html
 SHOPSERVE_ITEM_RE = re.compile(r"/SHOP/(?!.*/)([^/]+)\.html$", re.I)
-SHOPSERVE_CAT_RE = re.compile(r"/SHOP/(\d+)/(\d+)/list\.html$", re.I)
+SHOPSERVE_CAT_RE = re.compile(r"/SHOP/(\d+)(?:/(\d+))?/list\.html$", re.I)
 
 # FC2 カート：商品頁常見 ?pid=123 或 /ca3/45/
 FC2_ITEM_RE = re.compile(r"[?&]pid=(\d+)|/ca\d+/\d+/?$", re.I)
@@ -96,7 +97,12 @@ def find_item_links(html: str, base_url: str, kind: str):
 
 
 def find_category_links(html: str, base_url: str, kind: str):
-    """從首頁 / 分類索引頁找出所有商品分類頁。"""
+    """找出分類頁。回傳 [{url, text, top, sub}]。
+
+    text / top / sub 是給上層判斷「這個分類裝的是實機還是配件」用的：
+    兩站都把 スロット実機 和 スロットオプション 放在不同的大分類底下，
+    大分類 ID 就寫在網址裡，比猜商品名可靠得多。
+    """
     soup = soup_of(html)
     host = urlparse(base_url).netloc
     seen, out = set(), []
@@ -107,15 +113,28 @@ def find_category_links(html: str, base_url: str, kind: str):
         absolute = urljoin(base_url, href).split("#")[0]
         if urlparse(absolute).netloc != host:
             continue
+
+        top = sub = None
         if kind == "shopserve":
-            ok = SHOPSERVE_CAT_RE.search(absolute)
+            m = SHOPSERVE_CAT_RE.search(absolute)
+            if not m:
+                continue
+            top, sub = m.group(1), m.group(2)
         else:
             # FC2 的商品頁網址也帶著 ca=（?ca=3&pid=120），要把商品頁排除掉，
             # 否則會把幾千個商品頁全部當成分類頁去翻頁。
-            ok = FC2_CAT_RE.search(absolute) and not FC2_ITEM_RE.search(absolute)
-        if ok and absolute not in seen:
-            seen.add(absolute)
-            out.append(absolute)
+            if not (FC2_CAT_RE.search(absolute) and not FC2_ITEM_RE.search(absolute)):
+                continue
+
+        if absolute in seen:
+            continue
+        seen.add(absolute)
+        out.append({
+            "url": absolute,
+            "text": re.sub(r"\s+", " ", a.get_text(" ", strip=True))[:60],
+            "top": top,
+            "sub": sub,
+        })
     return out
 
 

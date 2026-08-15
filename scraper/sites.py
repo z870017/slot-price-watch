@@ -19,6 +19,7 @@ from .config import (
     MAX_NAME_LENGTH,
     MIN_MACHINE_PRICE,
     NON_MACHINE_KEYWORDS,
+    OPTION_CATEGORY_KEYWORDS,
     SiteConfig,
 )
 from .http import Fetcher
@@ -79,6 +80,11 @@ def _save_probe_cache(cache: dict) -> None:
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
 
+def is_option_category(name: str) -> bool:
+    """這個大分類裝的是配件／服務，不是實機。"""
+    return any(word in name for word in OPTION_CATEGORY_KEYWORDS)
+
+
 def is_machine(name: str, price: int) -> bool:
     """判斷這筆是不是一台實機（而不是配件、服務或版面文案）。
 
@@ -104,8 +110,13 @@ class SiteScraper:
     ENOUGH_CATEGORIES = 10
     # 分類第一頁至少有這麼多商品，才值得拿它去試「有沒有第 2 頁」
     PAGE_PROBE_MIN_ITEMS = 20
-    # 探測最多試幾個分類；都失敗才判定這個站真的沒有分頁
-    MAX_PROBE_ATTEMPTS = 3
+    # 探測最多試幾個分類。
+    #
+    # 這個數字要放大，因為 ShopServe 對超出範圍的頁碼是「回傳第 1 頁」而不是 404 ——
+    # 拿一個只有一頁的分類去試，看起來就跟「這個站不支援分頁」一模一樣。
+    # 之前設 3，A-SLOT 前三個滿 20 件的分類剛好都只有一頁，就被誤判成沒有分頁，
+    # 整站少抓了一大半商品。
+    MAX_PROBE_ATTEMPTS = 8
 
     def discover_categories(self) -> list:
         """找出所有商品分類頁。
@@ -115,28 +126,51 @@ class SiteScraper:
         光是這個探索階段就花了 5 分 43 秒，佔掉整輪一半的時間。
         只有第一層收穫太少時才退回去做第二層。
         """
-        found = []
+        entries = []
         for url in self.site.start_urls:
             html = self.fetcher.get(url)
             if not html:
                 continue
-            for cat in parse.find_category_links(html, self.site.base_url, self.site.kind):
-                if cat not in found:
-                    found.append(cat)
+            for e in parse.find_category_links(html, self.site.base_url, self.site.kind):
+                if not any(x["url"] == e["url"] for x in entries):
+                    entries.append(e)
 
-        if len(found) < self.ENOUGH_CATEGORIES:
-            log.info("[%s] 第一層只找到 %d 個分類，往下再找一層", self.site.key, len(found))
-            for url in list(found):
-                html = self.fetcher.get(url)
+        if len(entries) < self.ENOUGH_CATEGORIES:
+            log.info("[%s] 第一層只找到 %d 個分類，往下再找一層", self.site.key, len(entries))
+            for e in list(entries):
+                html = self.fetcher.get(e["url"])
                 if not html:
                     continue
-                for cat in parse.find_category_links(html, self.site.base_url, self.site.kind):
-                    if cat not in found:
-                        found.append(cat)
+                for sub in parse.find_category_links(html, self.site.base_url, self.site.kind):
+                    if not any(x["url"] == sub["url"] for x in entries):
+                        entries.append(sub)
 
+        # 大分類 ID → 導覽上的名稱（「スロット実機」「オプション」…）
+        top_names = {
+            e["top"]: e["text"]
+            for e in entries
+            if e["top"] and not e["sub"] and e["text"]
+        }
+        excluded_tops = {tid: name for tid, name in top_names.items() if is_option_category(name)}
+        if excluded_tops:
+            log.info("[%s] 排除配件／服務大分類：%s", self.site.key,
+                     "、".join(f"{n}({i})" for i, n in excluded_tops.items()))
+
+        found, skipped = [], 0
+        for e in entries:
+            # 大分類頁本身不抓，它底下的小分類會逐一走訪
+            if e["top"] and not e["sub"] and e["top"] in top_names:
+                continue
+            if e["top"] and e["top"] in excluded_tops:
+                skipped += 1
+                continue
+            found.append(e["url"])
+
+        if skipped:
+            log.info("[%s] 跳過 %d 個配件分類", self.site.key, skipped)
         if not found:
             self.warnings.append(f"[{self.site.key}] 找不到任何分類頁 — 網站結構可能已改版")
-        log.info("[%s] 找到 %d 個分類", self.site.key, len(found))
+        log.info("[%s] 找到 %d 個實機分類", self.site.key, len(found))
         if self.site.max_categories:
             found = found[: self.site.max_categories]
         return found
@@ -167,6 +201,9 @@ class SiteScraper:
                 result = scheme
                 log.info("[%s] 分頁方式偵測成功：%s / %s", self.site.key, scheme[0], scheme[1])
                 break
+            log.debug("[%s] 分頁候選 %s/%s 無效（新商品 %d 個）",
+                      self.site.key, scheme[0], scheme[1],
+                      len(urls - first_page_urls) if urls else 0)
 
         if result:
             cache[self.site.key] = list(result)
@@ -267,9 +304,12 @@ class SiteScraper:
                 f"（後續頁面的商品會漏掉）"
             )
 
-        dropped = len(by_url) - len(rows)
+        # 扣掉被過濾器擋下的，剩下的才是真正「抓壞了」的筆數
+        dropped = len(by_url) - len(rows) - skipped_non_machine
         if dropped:
             self.warnings.append(f"[{self.site.key}] {dropped} 件因缺名稱或價格被捨棄")
+        if skipped_non_machine:
+            log.info("[%s] 另有 %d 筆非機台項目被過濾", self.site.key, skipped_non_machine)
         log.info("[%s] 完成：%d 件有效商品（請求 %d 次）",
                  self.site.key, len(rows), self.fetcher.stats["requests"])
         return rows
