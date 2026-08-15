@@ -262,7 +262,7 @@ function render() {
     ["name", "機種"], ["site_count", "站數"],
     ...sites.map(x => [`site_${x.key}`, x.name]),
     ["spread", "價差"], ["spread_pct", "%"],
-    ["souba_delta", "行情漲跌"], ["souba_weeks", "上市週"],
+    ["souba_delta", "行情排名／漲跌"], ["souba_weeks", "上市週"],
   ];
   $("thead").innerHTML = cols.map(([k, l]) =>
     `<th data-k="${k}">${l}${SORT.key === k ? (SORT.dir < 0 ? " ↓" : " ↑") : ""}</th>`
@@ -341,10 +341,13 @@ function renderRows() {
    跟店家售價是兩回事 —— 售價說要付多少，這個說現在是不是好時機 */
 function soubaCell(r) {
   const sb = r.souba;
-  if (!sb || sb.delta == null) return `<td class="num muted">—</td>`;
+  if (!sb) return `<td class="num muted">—</td>`;
+  // 排名是公開資料，漲跌金額要登入才拿得到。
+  // 早期版本沒有金額就整格顯示「—」，等於把唯一抓得到的行情資訊也藏掉了。
+  const rank = sb.rank ? `<span class="twd">行情榜 ${sb.rank} 名</span>` : "";
+  if (sb.delta == null) return `<td class="num muted">—${rank}</td>`;
   const cls = sb.delta > 0 ? "up" : sb.delta < 0 ? "down" : "muted";
   const sign = sb.delta > 0 ? "+" : "";
-  const rank = sb.rank ? `<span class="twd">行情榜 ${sb.rank} 名</span>` : "";
   return `<td class="num ${cls}">${sign}${sb.delta.toLocaleString()}${rank}</td>`;
 }
 
