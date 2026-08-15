@@ -3,7 +3,10 @@
     "path",
     "list"
   ],
-  "a_slot": "",
+  "a_slot": [
+    "path",
+    "list"
+  ],
   "initialp": [
     "query",
     "page"
