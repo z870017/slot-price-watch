@@ -82,6 +82,8 @@
   .cell-low{background:var(--low-soft)}
   .cell-low a{color:var(--low);font-weight:650}
   .spread{color:var(--hi);font-weight:650}
+  .up{color:var(--hi);font-weight:600}
+  .down{color:var(--accent);font-weight:600}
   .pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:99px;
     background:var(--accent-soft);color:var(--accent);margin-left:5px}
   .pill.out{background:var(--line);color:var(--ink3)}
@@ -260,6 +262,7 @@ function render() {
     ["name", "機種"], ["site_count", "站數"],
     ...sites.map(x => [`site_${x.key}`, x.name]),
     ["spread", "價差"], ["spread_pct", "%"],
+    ["souba_delta", "行情漲跌"], ["souba_weeks", "上市週"],
   ];
   $("thead").innerHTML = cols.map(([k, l]) =>
     `<th data-k="${k}">${l}${SORT.key === k ? (SORT.dir < 0 ? " ↓" : " ↑") : ""}</th>`
@@ -292,6 +295,12 @@ function renderRows() {
     if (k.startsWith("site_")) {
       const sk = k.slice(5);
       va = a.sites[sk]?.price ?? Infinity; vb = b.sites[sk]?.price ?? Infinity;
+    } else if (k === "souba_delta") {
+      va = a.souba && a.souba.delta != null ? a.souba.delta : -Infinity;
+      vb = b.souba && b.souba.delta != null ? b.souba.delta : -Infinity;
+    } else if (k === "souba_weeks") {
+      va = a.souba && a.souba.weeks != null ? a.souba.weeks : Infinity;
+      vb = b.souba && b.souba.weeks != null ? b.souba.weeks : Infinity;
     } else if (k === "name") { va = a.name; vb = b.name; }
     else { va = a[k]; vb = b[k]; }
     if (typeof va === "string") return va.localeCompare(vb) * SORT.dir;
@@ -322,8 +331,21 @@ function renderRows() {
       <td class="num ${r.spread > 0 ? "spread" : "muted"}">${r.spread ? yen(r.spread) : "—"}
         <span class="twd">${r.spread ? twd(r.spread) : ""}</span></td>
       <td class="num muted">${r.spread_pct ? r.spread_pct + "%" : "—"}</td>
+      ${soubaCell(r)}
+      <td class="num muted">${r.souba && r.souba.weeks != null ? r.souba.weeks : "—"}</td>
     </tr>`;
   }).join("");
+}
+
+/* 行情漲跌：紅漲藍跌，來自中古機相場.com 的業者行情，
+   跟店家售價是兩回事 —— 售價說要付多少，這個說現在是不是好時機 */
+function soubaCell(r) {
+  const sb = r.souba;
+  if (!sb || sb.delta == null) return `<td class="num muted">—</td>`;
+  const cls = sb.delta > 0 ? "up" : sb.delta < 0 ? "down" : "muted";
+  const sign = sb.delta > 0 ? "+" : "";
+  const rank = sb.rank ? `<span class="twd">行情榜 ${sb.rank} 名</span>` : "";
+  return `<td class="num ${cls}">${sign}${sb.delta.toLocaleString()}${rank}</td>`;
 }
 
 function escapeHtml(s) {
