@@ -233,6 +233,11 @@ class SiteScraper:
             if not html:
                 continue
             items = parse.parse_list_page(html, cat_url, self.site.kind)
+            if not items and idx <= 2:
+                # 分類頁抓得到、卻一件商品都認不出來 → 多半是商品網址規則沒對上。
+                # 把實際連結印出來，比在本地猜正則快得多。
+                log.info("[%s] %s 認不出任何商品，頁面連結樣本：\n    %s",
+                         self.site.key, cat_url, parse.sample_links(html, cat_url))
             first_page_urls = {i["url"] for i in items}
             for item in items:
                 by_url.setdefault(item["url"], item)

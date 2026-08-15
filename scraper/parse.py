@@ -96,6 +96,23 @@ def find_item_links(html: str, base_url: str, kind: str):
     return out
 
 
+def sample_links(html: str, base_url: str, limit: int = 18) -> str:
+    """診斷用：抓不到商品時，把頁面上的連結樣本印出來，
+    才能看出商品網址到底長什麼樣（而不是坐在那邊猜正則）。"""
+    soup = soup_of(html)
+    seen = []
+    for a in soup.select("a[href]"):
+        h = (a.get("href") or "").strip()
+        if h.startswith(("javascript:", "mailto:", "#")) or not h:
+            continue
+        h = urljoin(base_url, h).split("#")[0]
+        if h not in seen:
+            seen.append(h)
+        if len(seen) >= limit:
+            break
+    return " ｜ ".join(seen)
+
+
 def find_category_links(html: str, base_url: str, kind: str):
     """找出分類頁。回傳 [{url, text, top, sub}]。
 
