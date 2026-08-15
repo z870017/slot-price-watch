@@ -93,7 +93,21 @@
     border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
   dialog ol{font-size:12.8px;color:var(--ink2);padding-left:20px;margin:0 0 14px}
   .row{display:flex;gap:8px;justify-content:flex-end}
-  footer{margin-top:26px;font-size:12px;color:var(--ink3);text-align:center}
+  footer{margin-top:26px;font-size:12px;color:var(--ink3);text-align:center;line-height:1.9}
+  /* 管理者入口刻意做成頁尾一個不起眼的點：外部訪客不會注意到，
+     知道的人點一下就能設定 token。避免拿到網址的人看到一堆設定按鈕不知所措。 */
+  .adminlink{cursor:pointer;user-select:none;opacity:.45;padding:0 10px}
+  .adminlink:hover{opacity:1;color:var(--accent)}
+  /* 手機上表格要橫向捲動才看得完各站價格，把機種名固定在左邊，
+     不然捲到右邊就不知道現在看的是哪一台 */
+  @media(max-width:640px){
+    .wrap{padding:20px 12px 60px}
+    h1{font-size:19px}
+    td.name{position:sticky;left:0;background:var(--card);z-index:2;
+      box-shadow:1px 0 0 var(--line);min-width:140px;max-width:170px}
+    thead th:first-child{position:sticky;left:0;background:var(--bg);z-index:3}
+    tbody tr:hover td.name{background:var(--accent-soft)}
+  }
 </style>
 </head>
 <body>
@@ -105,8 +119,7 @@
     <div class="updated" id="updated">載入中…</div>
   </div>
   <div class="actions">
-    <button class="primary" id="refresh">立即更新</button>
-    <button class="ghost" id="settings">設定</button>
+    <button class="primary" id="refresh">重新整理</button>
   </div>
 </header>
 
@@ -131,7 +144,11 @@
   <div class="empty" id="empty" hidden>沒有符合條件的機種</div>
 </div>
 
-<footer>資料來自各店家公開商品頁，僅供個人比價參考。實際價格請以店家頁面為準。</footer>
+<footer>
+  資料來自各店家公開商品頁，每天自動更新兩次（台灣時間 07:00 / 19:00）。<br>
+  價格為店家標價，不含運費與配件差異，下單前請點連結回原站確認。<br>
+  <span id="adminEntry" class="adminlink" title="管理者設定">·</span>
+</footer>
 </div>
 
 <dialog id="dlg">
@@ -299,11 +316,16 @@ async function triggerRefresh() {
   const slug = repoSlug();
   const token = localStorage.getItem(LS.token);
 
-  if (!slug) { openSettings(); return; }
-  if (!token) {
-    // 沒設 token 也能用：直接開 Actions 頁面讓使用者手動按 Run workflow
-    window.open(`https://github.com/${slug}/actions/workflows/${WORKFLOW}`, "_blank");
-    log(`已開啟 GitHub Actions 頁面，請按 <b>Run workflow</b>。設定 token 後就能在這裡一鍵觸發。`);
+  // 一般訪客（沒有 token）按下去就是重新載入最新資料，不會被丟到 GitHub 去。
+  // 這個頁面是要給外部人員看的，任何「你得先去某個網站設定什麼」的流程都不能出現。
+  if (!token || !slug) {
+    const btn = $("refresh");
+    btn.disabled = true;
+    log(`<span class="spin"></span>重新載入最新資料…`);
+    await loadData(true);
+    const t = DATA ? new Date(DATA.generated_at).toLocaleString("zh-TW", { hour12: false }) : "";
+    log(DATA ? `已是最新資料（資料時間 ${t}）` : `目前沒有資料`);
+    btn.disabled = false;
     return;
   }
 
@@ -376,18 +398,28 @@ function openSettings() {
   $("tokenIn").value = localStorage.getItem(LS.token) || "";
   $("dlg").showModal();
 }
-$("settings").onclick = openSettings;
+$("adminEntry").onclick = openSettings;
 $("dlgCancel").onclick = () => $("dlg").close();
 $("dlgClear").onclick = () => {
   localStorage.removeItem(LS.token); localStorage.removeItem(LS.repo);
-  $("dlg").close(); log("已清除設定");
+  $("dlg").close(); syncButtonLabel(); log("已清除設定");
 };
 $("dlgSave").onclick = () => {
   const repo = $("repoIn").value.trim(), token = $("tokenIn").value.trim();
   repo ? localStorage.setItem(LS.repo, repo) : localStorage.removeItem(LS.repo);
   token ? localStorage.setItem(LS.token, token) : localStorage.removeItem(LS.token);
-  $("dlg").close(); log("設定已儲存");
+  $("dlg").close(); syncButtonLabel(); log("設定已儲存");
 };
+
+/* 有 token 的是管理者，按鈕才變成會真的去抓一輪的「立即更新」 */
+function syncButtonLabel() {
+  const isAdmin = !!localStorage.getItem(LS.token);
+  $("refresh").textContent = isAdmin ? "立即更新" : "重新整理";
+  $("refresh").title = isAdmin
+    ? "觸發一次完整抓取（約 30–60 分鐘）"
+    : "重新載入最新資料";
+}
+syncButtonLabel();
 
 $("refresh").onclick = triggerRefresh;
 ["q", "onlyCompare", "onlyStock"].forEach(id => $(id).oninput = () => DATA && renderRows());
