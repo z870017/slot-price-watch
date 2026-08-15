@@ -152,3 +152,22 @@ def site_counts(conn: sqlite3.Connection, run_id: int) -> dict:
         "SELECT site, COUNT(*) AS n FROM observations WHERE run_id = ? GROUP BY site", (run_id,)
     ).fetchall()
     return {r["site"]: r["n"] for r in rows}
+
+
+def latest_run_id(conn: sqlite3.Connection):
+    row = conn.execute(
+        "SELECT id FROM runs WHERE finished_at IS NOT NULL ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    return row["id"] if row else None
+
+
+def load_observations(conn: sqlite3.Connection, run_id: int) -> list:
+    """把某一輪抓到的原始資料讀回來，供 --reprocess 重新產表用。"""
+    rows = conn.execute("SELECT * FROM observations WHERE run_id = ?", (run_id,)).fetchall()
+    return [
+        {
+            "site": r["site"], "site_name": r["site"], "url": r["url"],
+            "raw_name": r["raw_name"], "price": r["price"], "sold_out": bool(r["sold_out"]),
+        }
+        for r in rows
+    ]

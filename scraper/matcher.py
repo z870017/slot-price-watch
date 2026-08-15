@@ -131,9 +131,36 @@ def build_groups(rows: list):
     return groups, review
 
 
+# 同一台機在不同店的報價差到這個倍數以上，就不是一般行情差異了。
+#
+# 但注意：這**不代表抓錯**。實際查證過 ソードアート オンラインII ——
+# 兩站報 7～8 萬，FC2 站上白紙黑字就是標 3,580,000 円。日本店家有時會把
+# 不想賣或缺貨的品項掛上天價，那是真實標價。
+#
+# 所以這裡只「標記」不「刪除」：價格照實呈現（那是網站上真的寫的），
+# 但不讓它去污染價差中位數、最大價差、可省金額這些統計數字。
+OUTLIER_RATIO = 8
+
+
+def _flag_outlier_prices(by_site: dict) -> int:
+    """把明顯偏離行情的報價標記起來。回傳標記筆數。"""
+    for val in by_site.values():
+        val["outlier"] = False
+    if len(by_site) < 2:
+        return 0
+    low = min(v["price"] for v in by_site.values())
+    flagged = 0
+    for val in by_site.values():
+        if val["price"] > low * OUTLIER_RATIO:
+            val["outlier"] = True
+            flagged += 1
+    return flagged
+
+
 def summarize(groups: dict, site_keys: list) -> list:
     """把群組整理成前端要的比價列。"""
     out = []
+    dropped_total = []
     for group in groups.values():
         in_stock = [m for m in group["members"] if not m["sold_out"]]
         pool = in_stock or group["members"]     # 全部售完時退而列出售完價，但會標記
@@ -149,10 +176,19 @@ def summarize(groups: dict, site_keys: list) -> list:
                     "sold_out": member["sold_out"],
                 }
 
+        flagged = _flag_outlier_prices(by_site)
+        if flagged:
+            for key, val in by_site.items():
+                if val["outlier"]:
+                    dropped_total.append({"name": group["name"], "site": key, **val})
+
         prices = [v["price"] for v in by_site.values()]
         if not prices:
             continue
-        low, high = min(prices), max(prices)
+        # 價差統計只看正常報價，天價品項照樣顯示但不參與計算，
+        # 否則「最大價差」「可省金額」會被一兩筆天價灌成假數字
+        normal = [v["price"] for v in by_site.values() if not v["outlier"]] or prices
+        low, high = min(normal), max(normal)
 
         out.append({
             "gid": group["gid"],
@@ -165,10 +201,13 @@ def summarize(groups: dict, site_keys: list) -> list:
             "max_price": high,
             "spread": high - low,
             "spread_pct": round((high - low) / high * 100, 1) if high else 0.0,
-            "cheapest_site": min(by_site.items(), key=lambda kv: kv[1]["price"])[0],
+            "has_outlier": bool(flagged),
+            "cheapest_site": min(
+                (kv for kv in by_site.items() if not kv[1]["outlier"]),
+                key=lambda kv: kv[1]["price"], default=min(by_site.items(), key=lambda kv: kv[1]["price"]))[0],
             "sites": {k: by_site.get(k) for k in site_keys},
         })
 
     # 可比價（多站都有）且價差大的排前面 —— 這就是客戶真正想看的東西
     out.sort(key=lambda r: (-r["site_count"], -r["spread"]))
-    return out
+    return out, dropped_total

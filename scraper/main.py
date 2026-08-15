@@ -37,6 +37,22 @@ def run(args) -> int:
             site.max_categories = args.limit_categories
 
     conn = db.connect()
+
+    # --reprocess：不碰網路，直接拿資料庫裡最新一輪的原始資料重算報表。
+    # 調整比對規則、過濾條件、統計方式時用這個，30 秒就能看到結果，
+    # 不必為了改一行邏輯重抓 40 分鐘。
+    if getattr(args, "reprocess", False):
+        run_id = db.latest_run_id(conn)
+        if run_id is None:
+            log.error("資料庫裡還沒有任何完整的抓取紀錄，無法 reprocess")
+            return 1
+        all_rows = db.load_observations(conn, run_id)
+        warnings = ["本次為重算模式：沿用最近一輪抓取的原始資料，未重新連線各站"]
+        log.info("=== reprocess run #%d：%d 筆原始資料 ===", run_id, len(all_rows))
+        counts = db.site_counts(conn, run_id)
+        changes = []
+        return _finish(args, conn, run_id, all_rows, warnings, counts, changes, selected)
+
     run_id = db.start_run(conn, trigger=args.trigger)
     log.info("=== run #%d 開始（trigger=%s）===", run_id, args.trigger)
 
@@ -70,10 +86,21 @@ def run(args) -> int:
 
     changes = db.detect_changes(conn, run_id)
     log.info("偵測到 %d 筆變動", len(changes))
+    return _finish(args, conn, run_id, all_rows, warnings, counts, changes, selected)
 
+
+def _finish(args, conn, run_id, all_rows, warnings, counts, changes, selected):
+    """比對 → 統計 → 輸出。正常抓取與 --reprocess 共用這一段。"""
     groups, review = build_groups(all_rows)
     site_keys = [s.key for s in selected]
-    comparison = summarize(groups, site_keys)
+    comparison, price_outliers = summarize(groups, site_keys)
+    if price_outliers:
+        log.info("標記 %d 筆天價報價（同機種報價超過最低價 8 倍，不列入價差統計）", len(price_outliers))
+        for o in price_outliers[:10]:
+            log.info("  天價：%s @ %s ¥%s  %s", o["name"][:28], o["site"], f'{o["price"]:,}', o["url"])
+        warnings.append(
+            f"有 {len(price_outliers)} 筆報價明顯偏離行情（例如店家對缺貨品掛天價），"
+            f"價格照實顯示但不列入價差統計")
     summary = report.poc_summary(comparison, counts, site_keys)
 
     site_meta = [{"key": s.key, "name": s.name, "base_url": s.base_url} for s in selected]
@@ -91,6 +118,8 @@ def run(args) -> int:
     os.makedirs(os.path.join(report.ROOT, "out"), exist_ok=True)
     with open(os.path.join(report.ROOT, "out", "review_queue.json"), "w", encoding="utf-8") as f:
         json.dump(review, f, ensure_ascii=False, indent=2)
+    with open(os.path.join(report.ROOT, "out", "price_outliers.json"), "w", encoding="utf-8") as f:
+        json.dump(price_outliers, f, ensure_ascii=False, indent=2)
 
     print("\n" + "=" * 62)
     print(f"  抓取商品         {summary['total_products']:>6} 件  {summary['per_site']}")
@@ -131,7 +160,7 @@ def demo(args) -> int:
 
     groups, review = build_groups(DEMO_ROWS)
     site_keys = [s.key for s in SITES]
-    comparison = summarize(groups, site_keys)
+    comparison, price_outliers = summarize(groups, site_keys)
     summary = report.poc_summary(comparison, counts, site_keys)
     site_meta = [{"key": s.key, "name": s.name, "base_url": s.base_url} for s in SITES]
 
@@ -165,6 +194,8 @@ def main() -> int:
     p_run.add_argument("--use-cache", action="store_true", help="重用本地 HTTP 快取")
     p_run.add_argument("--no-detail", action="store_true", help="不補抓商品明細頁（更快但資料較少）")
     p_run.add_argument("--no-excel", action="store_true", help="不產出 Excel")
+    p_run.add_argument("--reprocess", action="store_true",
+                       help="不連網路，用資料庫最新一輪的原始資料重新產出報表")
     p_run.add_argument("--trigger", default="manual", help="觸發來源標記（schedule / manual / web）")
     p_run.set_defaults(func=run)
 
