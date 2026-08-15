@@ -79,6 +79,36 @@ NOISE_WORDS = [
 ]
 
 BRACKET_RE = re.compile(r"[【】［］\[\]（）()〔〕《》〈〉「」『』]")
+
+# 柏青哥（パチンコ）和柏青嫂（パチスロ）是完全不同的機器，名字卻常常一樣
+# —— 「新鬼武者」兩種都有。實際跑出來就把 エンターライズ 的スロット機
+# 和 平和 的パチンコ機 併成同一台了。這兩類必須硬性分開。
+PACHINKO_HINTS = ["パチンコ実機", "パチンコ台実機", "中古パチンコ", "スマパチ", "甘デジ"]
+SLOT_HINTS = ["パチスロ実機", "パチスロ台実機", "スロット実機", "中古パチスロ",
+              "中古スロット", "スマスロ", "中古スマスロ"]
+
+# 同一機種的面板版本（レムパネル / 剣聖パネル / 双子パネル…）價格差很多，
+# 是不同商品，不能混在一起比價
+VARIANT_RE = re.compile(r"([ぁ-んァ-ヶ一-龥A-Za-z0-9]{1,10})(パネル|バージョン|Ver\.?)")
+
+
+def detect_kind(raw_name: str):
+    """判斷這是柏青嫂還是柏青哥。判斷不出來回 None（視為相容）。"""
+    has_p = any(h in raw_name for h in PACHINKO_HINTS)
+    has_s = any(h in raw_name for h in SLOT_HINTS)
+    if has_p and not has_s:
+        return "pachinko"
+    if has_s and not has_p:
+        return "slot"
+    return None
+
+
+def extract_variant(text: str):
+    """抽出面板／版本標記，例如「レムパネル」的 レム。"""
+    m = VARIANT_RE.search(text)
+    return m.group(1) if m else None
+
+
 MULTISPACE_RE = re.compile(r"\s+")
 
 
@@ -147,6 +177,9 @@ def normalize(raw_name: str) -> dict:
         "spec": spec,
         "maker": maker,
         "digits": digit_fingerprint(core),
+        # 用原始標題判斷機種類型：清洗過的 core 已經把「パチスロ実機」這種字樣刪掉了
+        "kind": detect_kind(raw_name),
+        "variant": extract_variant(to_halfwidth(raw_name)),
     }
 
 

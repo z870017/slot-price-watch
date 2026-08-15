@@ -70,7 +70,10 @@ def build_groups(rows: list):
 
         # 2) key 完全相同
         gid = exact.get(key)
-        if gid is not None and spec_compatible(groups[gid]["spec"], spec):
+        if gid is not None and spec_compatible(groups[gid]["spec"], spec) \
+                and groups[gid]["variant"] == row["variant"] \
+                and (groups[gid]["kind"] is None or row["kind"] is None
+                     or groups[gid]["kind"] == row["kind"]):
             groups[gid]["members"].append(row)
             continue
 
@@ -88,7 +91,11 @@ def build_groups(rows: list):
                 # 續作編號不同（からくりサーカス vs からくりサーカス2）→
                 # 不管相似度多高都不自動配，只丟人工確認
                 same_digits = groups[cand_gid]["digits"] == row["digits"]
-                if score >= MATCH_AUTO and same_digits:
+                # 柏青嫂 vs 柏青哥、不同面板版本 → 都是不同商品，不可自動配
+                same_kind = (groups[cand_gid]["kind"] is None or row["kind"] is None
+                             or groups[cand_gid]["kind"] == row["kind"])
+                same_variant = groups[cand_gid]["variant"] == row["variant"]
+                if score >= MATCH_AUTO and same_digits and same_kind and same_variant:
                     matched_gid = cand_gid
                     break
                 if best_reviewable is None:
@@ -97,7 +104,15 @@ def build_groups(rows: list):
                 cand_gid, score = best_reviewable
                 reason = "相似度不足"
                 if score >= MATCH_AUTO:
-                    reason = "續作編號不同" if groups[cand_gid]["digits"] != row["digits"] else "規格不同"
+                    if groups[cand_gid]["digits"] != row["digits"]:
+                        reason = "續作編號不同"
+                    elif (groups[cand_gid]["kind"] and row["kind"]
+                          and groups[cand_gid]["kind"] != row["kind"]):
+                        reason = "柏青嫂／柏青哥不同類"
+                    elif groups[cand_gid]["variant"] != row["variant"]:
+                        reason = "面板／版本不同"
+                    else:
+                        reason = "規格不同"
                 review.append({
                     "candidate_gid": cand_gid,
                     "candidate_name": groups[cand_gid]["name"],
@@ -122,6 +137,8 @@ def build_groups(rows: list):
             "spec": spec,
             "maker": row["maker"],
             "digits": row["digits"],
+            "kind": row["kind"],
+            "variant": row["variant"],
             "members": [row],
         }
         exact.setdefault(key, gid)
