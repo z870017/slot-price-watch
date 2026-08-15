@@ -84,6 +84,10 @@ class SiteScraper:
     # ---- 分類探索 -------------------------------------------------------
     # 第一層找到這麼多分類就夠了，不必再往下鑽
     ENOUGH_CATEGORIES = 10
+    # 分類第一頁至少有這麼多商品，才值得拿它去試「有沒有第 2 頁」
+    PAGE_PROBE_MIN_ITEMS = 20
+    # 探測最多試幾個分類；都失敗才判定這個站真的沒有分頁
+    MAX_PROBE_ATTEMPTS = 3
 
     def discover_categories(self) -> list:
         """找出所有商品分類頁。
@@ -146,11 +150,6 @@ class SiteScraper:
                 log.info("[%s] 分頁方式偵測成功：%s / %s", self.site.key, scheme[0], scheme[1])
                 break
 
-        if result is None:
-            self.warnings.append(
-                f"[{self.site.key}] 分頁方式偵測失敗，只會抓每個分類的第一頁"
-                f"（可能漏抓後續頁面的商品）"
-            )
         if result:
             cache[self.site.key] = list(result)
             _save_probe_cache(cache)
@@ -164,6 +163,8 @@ class SiteScraper:
 
         by_url = {}
         page_scheme = "__undetected__"
+        probe_attempts = 0
+        saw_full_page = False
 
         for idx, cat_url in enumerate(categories, 1):
             html = self.fetcher.get(cat_url)
@@ -174,8 +175,18 @@ class SiteScraper:
             for item in items:
                 by_url.setdefault(item["url"], item)
 
-            if page_scheme == "__undetected__" and items:
-                page_scheme = self.detect_page_scheme(cat_url, first_page_urls)
+            # 只拿「看起來裝滿了」的分類去探測分頁。
+            # 用只有 5 件商品的小分類去試第 2 頁，一定找不到，
+            # 那不代表這個站沒有分頁 —— 第一次實跑就是這樣誤判成失敗的。
+            if len(items) >= self.PAGE_PROBE_MIN_ITEMS:
+                saw_full_page = True
+                if page_scheme == "__undetected__" and probe_attempts < self.MAX_PROBE_ATTEMPTS:
+                    probe_attempts += 1
+                    detected = self.detect_page_scheme(cat_url, first_page_urls)
+                    if detected:
+                        page_scheme = detected
+                    elif probe_attempts >= self.MAX_PROBE_ATTEMPTS:
+                        page_scheme = None      # 試夠了還是不行，放棄
 
             if page_scheme and page_scheme != "__undetected__":
                 seen_urls = set(first_page_urls)
@@ -222,6 +233,14 @@ class SiteScraper:
                 "price": item["price"],
                 "sold_out": bool(item["sold_out"]),
             })
+
+        # 只有在「確實遇過滿頁分類、卻仍然探測不出分頁」時才示警。
+        # 試跑模式下分類少又小，沒探測是正常的，不該亂報警。
+        if saw_full_page and not (page_scheme and page_scheme != "__undetected__"):
+            self.warnings.append(
+                f"[{self.site.key}] 分頁方式偵測失敗，只抓到每個分類的第一頁"
+                f"（後續頁面的商品會漏掉）"
+            )
 
         dropped = len(by_url) - len(rows)
         if dropped:
