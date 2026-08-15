@@ -3,5 +3,9 @@
     "path",
     "list"
   ],
-  "a_slot": ""
+  "a_slot": "",
+  "initialp": [
+    "query",
+    "page"
+  ]
 }
