@@ -24,9 +24,14 @@ TAX_INCL_WORDS = ("税込", "込)", "込）")
 SHOPSERVE_ITEM_RE = re.compile(r"/SHOP/(?!.*/)([^/]+)\.html$", re.I)
 SHOPSERVE_CAT_RE = re.compile(r"/SHOP/(\d+)(?:/(\d+))?/list\.html$", re.I)
 
-# FC2 カート：商品頁常見 ?pid=123 或 /ca3/45/
-FC2_ITEM_RE = re.compile(r"[?&]pid=(\d+)|/ca\d+/\d+/?$", re.I)
+# FC2 カート：商品頁的網址寫法各店不一，常見這幾種
+FC2_ITEM_RE = re.compile(r"[?&]pid=\d+|/ca\d+/\d+/|/no\d+/|/item/\d+", re.I)
 FC2_CAT_RE = re.compile(r"[?&]ca=(\d+)")
+
+# 明顯不是商品的連結（導覽、部落格、常見問題、購物車…）
+NON_ITEM_HINTS = re.compile(
+    r"(blog|faq|guide|law|privacy|contact|mail|cart|login|member|search|"
+    r"sitemap|calendar|rss|feed|about|company|help)", re.I)
 
 
 def soup_of(html: str) -> BeautifulSoup:
@@ -184,6 +189,46 @@ def _minimal_container(anchor, item_hrefs):
     return best
 
 
+def find_item_links_by_price(html: str, base_url: str):
+    """後援：不靠網址規則，改用「這個連結旁邊有沒有價格」來認商品。
+
+    各家購物車系統的商品網址格式差很多，寫死正則很容易對不上
+    （FC2 那站就是分類抓得到、商品一件都認不出來）。
+    但商品在版面上一定伴隨價格，這個特徵比網址格式穩定得多。
+    """
+    soup = soup_of(html)
+    host = urlparse(base_url).netloc
+    scored = {}
+
+    for a in soup.select("a[href]"):
+        href = (a.get("href") or "").strip()
+        if not href or href.startswith(("javascript:", "mailto:", "#")):
+            continue
+        absolute = urljoin(base_url, href).split("#")[0]
+        parts = urlparse(absolute)
+        if parts.netloc != host:
+            continue
+        if NON_ITEM_HINTS.search(parts.path) or NON_ITEM_HINTS.search(parts.query):
+            continue
+        # 純分類連結（只有 ?ca=N）不是商品
+        if FC2_CAT_RE.search(absolute) and not FC2_ITEM_RE.search(absolute):
+            if not parts.path.strip("/"):
+                continue
+
+        node, price_found = a, False
+        for _ in range(4):
+            node = node.parent
+            if node is None or node.name in ("body", "html"):
+                break
+            if parse_price(_clean_text(node)) is not None:
+                price_found = True
+                break
+        if price_found and absolute not in scored:
+            scored[absolute] = True
+
+    return list(scored.keys())
+
+
 def parse_list_page(html: str, page_url: str, kind: str):
     """從分類列表頁直接抽出商品（名稱/價格/售完）。
 
@@ -192,6 +237,9 @@ def parse_list_page(html: str, page_url: str, kind: str):
     """
     soup = soup_of(html)
     items_abs = find_item_links(html, page_url, kind)
+    if not items_abs:
+        # 網址規則沒對上就改用價格特徵找，不要整頁放棄
+        items_abs = find_item_links_by_price(html, page_url)
     if not items_abs:
         return []
 

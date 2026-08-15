@@ -45,8 +45,9 @@ SITES = [
         base_url="https://initialp.cart.fc2.com",
         kind="fc2cart",
         start_urls=["https://initialp.cart.fc2.com/"],
-        # 這站在偵查時 robots.txt 回 503，代表對機器人較敏感 → 節奏放到最慢
-        delay=4.0,
+        # 這站對抓取頻率最敏感：短時間內重複測試就會從 200 變成 403。
+        # 間隔拉到 7 秒，寧可慢也不要被鎖。
+        delay=7.0,
     ),
 ]
 

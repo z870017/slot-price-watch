@@ -103,8 +103,16 @@ class Fetcher:
                 if resp.status_code == 404:
                     return None
 
-                # 429 / 5xx → 退避重試
-                log.warning("HTTP %s on %s (attempt %d/%d)", resp.status_code, url, attempt, retries)
+                # 403 / 429 是「你太吵了」，不是內容不存在 → 退避要更狠，
+                # 而且退完之後要把整站的固定間隔也拉長，否則接下來每一頁都會撞牆
+                if resp.status_code in (403, 429):
+                    self.delay = min(self.delay * 1.5, 20.0)
+                    backoff = max(backoff, 15.0)
+                    log.warning("HTTP %s on %s — 放慢到每 %.1f 秒一次 (attempt %d/%d)",
+                                resp.status_code, url, self.delay, attempt, retries)
+                else:
+                    log.warning("HTTP %s on %s (attempt %d/%d)",
+                                resp.status_code, url, attempt, retries)
             except requests.RequestException as e:
                 log.warning("request failed %s: %s (attempt %d/%d)", url, e, attempt, retries)
 
