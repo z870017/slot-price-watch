@@ -59,6 +59,14 @@
   .grp-b{background:var(--bg)}
   td.raw{white-space:normal;max-width:420px;font-size:13px}
   .gid{font-variant-numeric:tabular-nums;color:var(--ink3);font-size:12px}
+  /* 機種類型切換：柏青哥和柏青嫂是兩種完全不同的機器，
+     大多數人一次只想看其中一種，做成一排按鈕比藏在下拉選單裡好按 */
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+  .chip{font-size:13px;padding:6px 14px;border-radius:99px;background:var(--card);
+    border:1px solid var(--line);color:var(--ink3);cursor:pointer}
+  .chip .n{font-size:11.5px;color:var(--ink3);margin-left:5px}
+  .chip.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  .chip.on .n{color:rgba(255,255,255,.75)}
   .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
   input[type=search],select,input[type=number]{font:inherit;padding:7px 11px;border:1px solid var(--line);
     border-radius:8px;background:var(--card);color:var(--ink)}
@@ -147,6 +155,13 @@
   <button class="tab" data-view="audit">校正明細</button>
 </div>
 
+<div class="chips" id="kinds">
+  <button class="chip on" data-kind="all">全部<span class="n"></span></button>
+  <button class="chip" data-kind="slot">柏青嫂 SLOT<span class="n"></span></button>
+  <button class="chip" data-kind="pachinko">柏青哥 PACHINKO<span class="n"></span></button>
+  <button class="chip" data-kind="none">未分類<span class="n"></span></button>
+</div>
+
 <div class="toolbar">
   <input type="search" id="q" placeholder="搜尋機種名…（例：からくり、カバネリ）">
   <label class="chk"><input type="checkbox" id="onlyCompare" checked> 只看可比價</label>
@@ -192,7 +207,7 @@ const WORKFLOW = "scrape.yml";
 const LS = { token: "spw_token", repo: "spw_repo", rate: "spw_rate" };
 const $ = (id) => document.getElementById(id);
 
-let DATA = null, SORT = { key: "spread", dir: -1 };
+let DATA = null, SORT = { key: "spread", dir: -1 }, KIND = "all";
 
 /* ---------- repo 位置：先看設定，沒有就從 GitHub Pages 網址推斷 ---------- */
 function repoSlug() {
@@ -287,18 +302,39 @@ function cmpNullable(va, vb, dir) {
   return (va - vb) * dir;
 }
 
+function matchKind(r) {
+  if (KIND === "all") return true;
+  if (KIND === "none") return !r.kind;
+  return r.kind === KIND;
+}
+
+function renderKindCounts(rows) {
+  const n = { all: rows.length, slot: 0, pachinko: 0, none: 0 };
+  rows.forEach(r => { n[r.kind === "slot" || r.kind === "pachinko" ? r.kind : "none"]++; });
+  document.querySelectorAll("#kinds .chip").forEach(c => {
+    c.querySelector(".n").textContent = n[c.dataset.kind];
+    // 未分類正常情況只有個位數，沒東西時就不要佔位置
+    if (c.dataset.kind === "none") c.hidden = n.none === 0 && KIND !== "none";
+  });
+}
+
 function renderRows() {
   const q = $("q").value.trim().toLowerCase();
   const onlyCompare = $("onlyCompare").checked;
   const onlyStock = $("onlyStock").checked;
   const sites = DATA.sites;
 
-  let rows = DATA.items.filter(r => {
+  // 類型以外的條件先套一輪，用這批算各類型的數量，
+  // 按鈕上的數字才會跟「切過去真的看得到幾台」一致
+  const base = DATA.items.filter(r => {
     if (onlyCompare && r.site_count < 2) return false;
     if (onlyStock && !r.in_stock) return false;
     if (q && !(r.name + " " + (r.maker || "")).toLowerCase().includes(q)) return false;
     return true;
   });
+  renderKindCounts(base);
+
+  let rows = base.filter(r => matchKind(r));
 
   const k = SORT.key;
   rows.sort((a, b) => {
@@ -516,9 +552,17 @@ function renderAudit() {
   }).join("");
 }
 
+document.querySelectorAll("#kinds .chip").forEach(c => c.onclick = () => {
+  KIND = c.dataset.kind;
+  document.querySelectorAll("#kinds .chip").forEach(x => x.classList.toggle("on", x === c));
+  if (DATA) renderRows();
+});
+
 document.querySelectorAll(".tab").forEach(t => t.onclick = async () => {
   document.querySelectorAll(".tab").forEach(x => x.classList.toggle("on", x === t));
   VIEW = t.dataset.view;
+  // 校正明細是逐筆原始資料，沒有機種類型可篩
+  $("kinds").hidden = VIEW === "audit";
   if (VIEW === "audit") {
     $("tbody").innerHTML = `<tr><td colspan="6" class="muted" style="padding:26px">載入逐筆明細…</td></tr>`;
     await loadAudit();
