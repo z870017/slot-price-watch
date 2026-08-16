@@ -174,6 +174,30 @@ def _flag_outlier_prices(by_site: dict) -> int:
     return flagged
 
 
+# 規格標記本身就足以判斷機種類型：スマスロ／号機／L 一定是柏青嫂，
+# スマパチ／P／e 一定是柏青哥。用來補那些標題完全沒寫「パチスロ実機」的商品。
+SPEC_TO_KIND = {
+    "スマスロ": "slot", "6号機": "slot", "5号機": "slot", "4号機": "slot",
+    "L": "slot", "S": "slot",
+    "スマパチ": "pachinko", "P": "pachinko", "e": "pachinko",
+}
+
+
+def display_kind(group: dict):
+    """這一群到底是柏青哥還是柏青嫂 —— 只用於顯示與篩選，不影響分群。
+
+    群建立時的 kind 只看第一筆商品的標題，很多店家標題根本沒寫，
+    於是一堆機台變成「未分類」。這裡改看整群：任何一筆成員標明了類型就採用
+    （同一群本來就不可能混到兩類，分群時已經擋掉），再不行才看規格標記推。
+    """
+    for member in group["members"]:
+        if member.get("kind"):
+            return member["kind"]
+    if group.get("kind"):
+        return group["kind"]
+    return SPEC_TO_KIND.get(group.get("spec"))
+
+
 def summarize(groups: dict, site_keys: list) -> list:
     """把群組整理成前端要的比價列。"""
     out = []
@@ -210,6 +234,7 @@ def summarize(groups: dict, site_keys: list) -> list:
         out.append({
             "gid": group["gid"],
             "name": group["name"],
+            "kind": display_kind(group),
             "spec": group["spec"],
             "maker": group["maker"],
             "site_count": len(by_site),
