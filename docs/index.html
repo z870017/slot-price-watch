@@ -262,7 +262,7 @@ function render() {
     ["name", "機種"], ["site_count", "站數"],
     ...sites.map(x => [`site_${x.key}`, x.name]),
     ["spread", "價差"], ["spread_pct", "%"],
-    ["souba_delta", "行情排名／漲跌"], ["souba_weeks", "上市週"],
+    ["souba_rank", "行情排名／漲跌"], ["souba_weeks", "上市週"],
   ];
   $("thead").innerHTML = cols.map(([k, l]) =>
     `<th data-k="${k}">${l}${SORT.key === k ? (SORT.dir < 0 ? " ↓" : " ↑") : ""}</th>`
@@ -274,6 +274,17 @@ function render() {
   });
 
   renderRows();
+}
+
+/* 有資料的排前面、沒資料的一律沉底，再依方向比大小。
+   舊版把缺值當成 Infinity 直接參與運算，結果按降冪排時
+   一整排「—」會被推到第一頁 —— 排序等於白排。 */
+function cmpNullable(va, vb, dir) {
+  const na = va == null, nb = vb == null;
+  if (na && nb) return 0;
+  if (na) return 1;
+  if (nb) return -1;
+  return (va - vb) * dir;
 }
 
 function renderRows() {
@@ -291,17 +302,15 @@ function renderRows() {
 
   const k = SORT.key;
   rows.sort((a, b) => {
-    let va, vb;
+    // 名次「1 名」是最好的，所以第一次點要由小到大 → 方向反過來帶進去
+    if (k === "souba_rank") return cmpNullable(a.souba?.rank, b.souba?.rank, -SORT.dir);
+    if (k === "souba_weeks") return cmpNullable(a.souba?.weeks, b.souba?.weeks, SORT.dir);
     if (k.startsWith("site_")) {
       const sk = k.slice(5);
-      va = a.sites[sk]?.price ?? Infinity; vb = b.sites[sk]?.price ?? Infinity;
-    } else if (k === "souba_delta") {
-      va = a.souba && a.souba.delta != null ? a.souba.delta : -Infinity;
-      vb = b.souba && b.souba.delta != null ? b.souba.delta : -Infinity;
-    } else if (k === "souba_weeks") {
-      va = a.souba && a.souba.weeks != null ? a.souba.weeks : Infinity;
-      vb = b.souba && b.souba.weeks != null ? b.souba.weeks : Infinity;
-    } else if (k === "name") { va = a.name; vb = b.name; }
+      return cmpNullable(a.sites[sk]?.price, b.sites[sk]?.price, SORT.dir);
+    }
+    let va, vb;
+    if (k === "name") { va = a.name; vb = b.name; }
     else { va = a[k]; vb = b[k]; }
     if (typeof va === "string") return va.localeCompare(vb) * SORT.dir;
     return (va - vb) * SORT.dir;
