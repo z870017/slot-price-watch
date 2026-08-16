@@ -54,18 +54,29 @@ def _verdict(comparable: int, median_spread: int) -> str:
 
 def write_frontend_json(comparison, summary, changes, site_meta, warnings, run_meta):
     os.makedirs(DOCS_DIR, exist_ok=True)
-    payload = {
+    base = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "run": run_meta,
         "sites": site_meta,
         "summary": summary,
         "warnings": warnings,
         "changes": changes[:300],
-        "items": comparison,
     }
+
+    # 只有一家有貨的機種佔了整包資料的四分之三（約 2.1MB），
+    # 但預設畫面勾著「只看可比價」，那些列根本不會出現 ——
+    # 等於每個人開網頁都在下載一堆看不到的東西，卡在「載入中」十幾秒。
+    # 拆成兩個檔：開頁面只載可比價的，使用者真的取消勾選時才補載完整版。
+    multi = [c for c in comparison if c["site_count"] >= 2]
     path = os.path.join(DOCS_DIR, "data.json")
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+        json.dump({**base, "items": multi, "items_partial": True,
+                   "single_site_count": len(comparison) - len(multi)},
+                  f, ensure_ascii=False, separators=(",", ":"))
+    with open(os.path.join(DOCS_DIR, "data_full.json"), "w", encoding="utf-8") as f:
+        json.dump({**base, "items": comparison, "items_partial": False,
+                   "single_site_count": 0},
+                  f, ensure_ascii=False, separators=(",", ":"))
     return path
 
 
