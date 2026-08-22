@@ -161,6 +161,35 @@ def latest_run_id(conn: sqlite3.Connection):
     return row["id"] if row else None
 
 
+def load_site_fallback(conn: sqlite3.Connection, site_key: str, before_run_id: int):
+    """找出某站最近一次「有抓到資料」的輪次，把那批原始資料讀回來。
+
+    用途：單站整站抓失敗時的保險。2026-08-22 凌晨 FC2 暫時擋掉了抓取，
+    當輪只剩兩家店的資料照樣發佈上線，結果整個白天比價表少了一整家店——
+    對外部使用者來說就是「機台不見了」。寧可顯示半天前的價格加註警告，
+    也不要讓整家店從表上消失。回傳 (資料列, 那一輪的時間)。
+    """
+    row = conn.execute(
+        "SELECT o.run_id AS rid, r.started_at AS ts FROM observations o"
+        " JOIN runs r ON r.id = o.run_id"
+        " WHERE o.site = ? AND o.run_id < ? ORDER BY o.run_id DESC LIMIT 1",
+        (site_key, before_run_id),
+    ).fetchone()
+    if row is None:
+        return [], None
+    rows = conn.execute(
+        "SELECT * FROM observations WHERE run_id = ? AND site = ?",
+        (row["rid"], site_key),
+    ).fetchall()
+    return [
+        {
+            "site": r["site"], "site_name": r["site"], "url": r["url"],
+            "raw_name": r["raw_name"], "price": r["price"], "sold_out": bool(r["sold_out"]),
+        }
+        for r in rows
+    ], row["ts"]
+
+
 def load_observations(conn: sqlite3.Connection, run_id: int) -> list:
     """把某一輪抓到的原始資料讀回來，供 --reprocess 重新產表用。"""
     rows = conn.execute("SELECT * FROM observations WHERE run_id = ?", (run_id,)).fetchall()
