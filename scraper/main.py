@@ -65,6 +65,11 @@ def run(args) -> int:
     log.info("=== run #%d 開始（trigger=%s）===", run_id, args.trigger)
 
     all_rows, warnings = [], []
+    prev_counts = {}
+    prev_id = db.previous_run_id(conn, run_id)
+    if prev_id:
+        prev_counts = db.site_counts(conn, prev_id)
+
     for site in selected:
         log.info("--- %s ---", site.name)
         scraper = SiteScraper(site, use_cache=args.use_cache, detail_fallback=not args.no_detail)
@@ -74,6 +79,22 @@ def run(args) -> int:
             log.exception("[%s] 抓取失敗", site.key)
             warnings.append(f"[{site.key}] 抓取過程發生錯誤：{e}")
             rows = []
+
+        # 保險絲：單站抓掛（或掉到剩不到一半）就沿用該站上一次的資料。
+        # FC2 偶爾會暫時擋爬蟲，一輪失敗如果照發，整家店會從比價表上
+        # 消失半天，看的人只會覺得「機台不見了」。過期但加註，好過缺一家。
+        prev_n = prev_counts.get(site.key, 0)
+        if prev_n >= 20 and len(rows) < prev_n * DROP_ALERT_RATIO:
+            fallback, ts = db.load_site_fallback(conn, site.key, run_id)
+            if len(fallback) > len(rows):
+                warnings.append(
+                    f"⚠ [{site.key}] 本次只抓到 {len(rows)} 筆（上次 {prev_n} 筆），"
+                    f"該站可能暫時擋了抓取 — 已沿用 {ts} 那一輪的 {len(fallback)} 筆資料，"
+                    f"此站價格可能非最新，下輪會自動重試"
+                )
+                log.warning("[%s] 啟用保險絲：%d 筆 → 沿用上輪 %d 筆", site.key, len(rows), len(fallback))
+                rows = fallback
+
         all_rows.extend(rows)
         warnings.extend(scraper.warnings)
 
