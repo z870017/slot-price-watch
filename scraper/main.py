@@ -127,7 +127,12 @@ def run(args) -> int:
             log.exception("行情榜抓取失敗")
             warnings.append(f"[p_souba] 抓取失敗：{e}")
 
-    return _finish(args, conn, run_id, all_rows, warnings, counts, changes, selected, rankings)
+    code = _finish(args, conn, run_id, all_rows, warnings, counts, changes, selected, rankings)
+    # 報表都出完才清舊資料，順序不能反：_finish 還要用到這一輪的完整內容
+    removed = db.prune(conn)
+    if removed:
+        log.info("清理 %d 筆舊觀測資料（只留最近兩輪），資料庫已壓實", removed)
+    return code
 
 
 def _finish(args, conn, run_id, all_rows, warnings, counts, changes, selected, rankings=None):
