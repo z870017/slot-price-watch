@@ -270,7 +270,17 @@ function render() {
 
   if (s.verdict) { $("verdict").textContent = s.verdict; $("verdict").hidden = false; }
 
-  $("alerts").innerHTML = (DATA.warnings || [])
+  // 排程一天跑兩次，超過一天沒更新就是自動更新掛了。
+  // 這種事必須在畫面上直接喊出來 —— 上次 push 連續失敗，
+  // 網站默默停在五天前的資料，看的人完全無從發現。
+  const warns = (DATA.warnings || []).slice();
+  const ageHours = (Date.now() - t.getTime()) / 3600000;
+  if (ageHours > 26) {
+    warns.unshift(
+      `⚠ 資料已 ${Math.floor(ageHours / 24)} 天 ${Math.floor(ageHours % 24)} 小時未更新` +
+      `（正常每 12 小時一次），自動更新可能故障，價格僅供參考`);
+  }
+  $("alerts").innerHTML = warns
     .map(w => `<div class="alert">${escapeHtml(w)}</div>`).join("");
 
   const cols = [
