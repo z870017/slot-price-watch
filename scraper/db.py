@@ -190,6 +190,33 @@ def load_site_fallback(conn: sqlite3.Connection, site_key: str, before_run_id: i
     ], row["ts"]
 
 
+def prune(conn: sqlite3.Connection, keep_runs: int = 2) -> int:
+    """清掉舊輪次的原始觀測資料，只留最近幾輪，然後把檔案壓實。
+
+    不清的下場已經發生過一次：每輪八千多筆全量快照，一天兩次，
+    三個星期就把 prices.db 養到 98MB —— 超過 GitHub 單檔 100MB 上限，
+    push 被拒，自動更新就此無聲無息地停了五天。
+
+    保留策略：
+    - observations 只留最近 keep_runs 輪 —— 變動偵測要上一輪、
+      單站失敗的保險絲要上一輪，各功能最多只往回看一輪，留兩輪夠了。
+    - changes（每一次變價、上下架事件）全部保留 —— 那才是價格走勢的
+      真正資料，量也小得多，Phase 2 畫趨勢圖靠它。
+    - VACUUM 是必要的：SQLite 刪資料不會還空間，不壓實檔案不會變小。
+    """
+    ids = [r["id"] for r in conn.execute(
+        "SELECT id FROM runs WHERE finished_at IS NOT NULL ORDER BY id DESC LIMIT ?",
+        (keep_runs,),
+    )]
+    if not ids:
+        return 0
+    marks = ",".join("?" * len(ids))
+    cur = conn.execute(f"DELETE FROM observations WHERE run_id NOT IN ({marks})", ids)
+    conn.commit()
+    conn.execute("VACUUM")
+    return cur.rowcount
+
+
 def load_observations(conn: sqlite3.Connection, run_id: int) -> list:
     """把某一輪抓到的原始資料讀回來，供 --reprocess 重新產表用。"""
     rows = conn.execute("SELECT * FROM observations WHERE run_id = ?", (run_id,)).fetchall()
